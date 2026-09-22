@@ -24,6 +24,11 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
+import retrofit2.converter.scalars.ScalarsConverterFactory;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE_S = 101;
@@ -36,12 +41,21 @@ public class MainActivity extends AppCompatActivity {
     // 버튼을 누를 때까지 데이터를 임시로 모아둘 리스트
     private List<String> pendingCsvData = new ArrayList<>();
 
+    private Retrofit retrofit;
+
     @Override
     protected void onCreate(Bundle savedBundleInstance) {
         super.onCreate(savedBundleInstance);
         setContentView(R.layout.activity_main);
 
         tvLog = findViewById(R.id.tvLog);
+
+        Gson gson = new GsonBuilder().setLenient().create();
+        retrofit = new Retrofit.Builder()
+                .baseUrl("http://10.255.81.72:10024/")
+                .addConverterFactory(ScalarsConverterFactory.create())
+                .addConverterFactory(GsonConverterFactory.create(gson))
+                .build();
 
         // 권한 체크 및 초기화
         bleInitialize(this);
