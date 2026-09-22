@@ -1,3 +1,5 @@
+package com.example.myapplication;
+
 public class SensorRequest {
     private String key;
     private String team;
