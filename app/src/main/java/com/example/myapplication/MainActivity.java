@@ -53,11 +53,11 @@ public class MainActivity extends AppCompatActivity {
 
         Button btnScan = findViewById(R.id.btnScan);
         Button btnStop = findViewById(R.id.btnStop);
-        Button btnSave = findViewById(R.id.btnSave); // 저장 버튼 연결
+        Button btnSave = findViewById(R.id.btnSave);
 
         btnScan.setOnClickListener(v -> startScanning());
         btnStop.setOnClickListener(v -> stopScanning());
-        btnSave.setOnClickListener(v -> saveBufferedData()); // 저장 버튼 클릭 시 실행
+        btnSave.setOnClickListener(v -> saveBufferedData());
     }
 
     private void bleInitialize(Activity activity) {
@@ -135,8 +135,8 @@ public class MainActivity extends AppCompatActivity {
                     String logStr = "\n[수신] 이름: " + deviceName + ", MAC: " + deviceAddress + ", RSSI: " + rssi + "\n" + packet.toString();
                     tvLog.append(logStr);
 
-                    // 파일에 바로 쓰지 않고 리스트에 텍스트 형태로 임시 보관
-                    String csvLine = packet.timestamp + "," + deviceName + "," + deviceAddress + "," + rssi + ",0x181A," + packet.eco2 + "," + packet.temperature + "\n";
+                    // ★ 습도, AQI, TVOC, HMAC 태그까지 모두 포함하여 임시 보관
+                    String csvLine = packet.timestamp + "," + deviceName + "," + deviceAddress + "," + rssi + ",0x181A," + packet.eco2 + "," + packet.temperature + "," + packet.humidity + "," + packet.aqi + "," + packet.tvoc + "," + packet.hmacTag + "\n";
                     pendingCsvData.add(csvLine);
                 }
             }
@@ -148,7 +148,6 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    // 저장 버튼을 누를 때 호출되는 메서드
     private void saveBufferedData() {
         if (pendingCsvData.isEmpty()) {
             Toast.makeText(this, "저장할 데이터가 없습니다.", Toast.LENGTH_SHORT).show();
@@ -161,12 +160,11 @@ public class MainActivity extends AppCompatActivity {
             boolean fileExists = file.exists();
             FileWriter fw = new FileWriter(file, true);
 
-            // 파일이 처음 생성되는 경우에만 맨 윗줄(헤더) 추가
+            // ★ 모든 데이터에 맞게 CSV 컬럼 헤더(맨 윗줄) 변경
             if (!fileExists) {
-                fw.append("timestamp,device_name,device_address,rssi,uuid,co2,temperature\n");
+                fw.append("timestamp,device_name,device_address,rssi,uuid,co2,temperature,humidity,aqi,tvoc,hmactag\n");
             }
 
-            // 임시 보관된 모든 데이터를 파일에 쓰기
             for (String line : pendingCsvData) {
                 fw.append(line);
             }
@@ -174,9 +172,8 @@ public class MainActivity extends AppCompatActivity {
             fw.flush();
             fw.close();
 
-            // 저장 완료 처리
             int savedCount = pendingCsvData.size();
-            pendingCsvData.clear(); // 쓴 데이터는 리스트에서 비우기
+            pendingCsvData.clear();
 
             Toast.makeText(this, savedCount + "건의 데이터가 저장되었습니다.", Toast.LENGTH_SHORT).show();
             tvLog.append("\n\n[알림] " + savedCount + "건의 데이터 CSV 저장 완료!");
