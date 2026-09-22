@@ -11,6 +11,8 @@ import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.pm.PackageManager;
+import android.location.Location;
+import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.ParcelUuid;
@@ -41,9 +43,14 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothAdapter blead;
     private BluetoothLeScanner bluetoothLeScanner;
     private TextView tvLog;
+    private LocationManager locationManager;
 
     // 버튼을 누를 때까지 데이터를 임시로 모아둘 리스트
     private List<String> pendingCsvData = new ArrayList<>();
+
+    // 서버 전송용: 가장 최근에 수신한 스캔 값
+    private SensorPacket lastPacket;
+    private String lastDeviceAddress;
 
     private Retrofit retrofit;
 
@@ -63,6 +70,8 @@ public class MainActivity extends AppCompatActivity {
 
         // 권한 체크 및 초기화
         bleInitialize(this);
+
+        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
 
         blead = BluetoothAdapter.getDefaultAdapter();
         if (blead != null && blead.isEnabled()) {
@@ -158,6 +167,9 @@ public class MainActivity extends AppCompatActivity {
                     // ★ 습도, AQI, TVOC, HMAC 태그까지 모두 포함하여 임시 보관
                     String csvLine = packet.timestamp + "," + deviceName + "," + deviceAddress + "," + rssi + ",0x181A," + packet.eco2 + "," + packet.temperature + "," + packet.humidity + "," + packet.aqi + "," + packet.tvoc + "," + packet.hmacTag + "\n";
                     pendingCsvData.add(csvLine);
+
+                    lastPacket = packet;
+                    lastDeviceAddress = deviceAddress;
                 }
             }
         }
@@ -203,8 +215,27 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "저장 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show();
         }
     }
+    private Location getLastKnownLocation() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return null;
+        }
+
+        Location best = null;
+        for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
+            try {
+                Location location = locationManager.getLastKnownLocation(provider);
+                if (location != null && (best == null || location.getTime() > best.getTime())) {
+                    best = location;
+                }
+            } catch (IllegalArgumentException | SecurityException ignored) {
+                // 기기에 해당 provider가 없거나 권한이 없는 경우
+            }
+        }
+        return best;
+    }
+
     private void sendDataToServer() {
-        if (pendingCsvData.isEmpty()) {
+        if (lastPacket == null) {
             Toast.makeText(this, "전송할 데이터가 없습니다.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -213,20 +244,24 @@ public class MainActivity extends AppCompatActivity {
 
         ApiService apiService = retrofit.create(ApiService.class);
 
-        // 예시: 가장 최근 스캔 결과 하나를 보낸다고 가정 (실제 값은 상황에 맞게 채워야 함)
+        Location location = getLastKnownLocation();
+        double lat = location != null ? location.getLatitude() : 0.0;
+        double lon = location != null ? location.getLongitude() : 0.0;
+
+        // 가장 최근에 수신한 실제 스캔 값을 전송
         SensorRequest request = new SensorRequest(
                 "opensrc2026",      // key
                 "team TA",          // team - 본인 팀 번호로 변경
                 "sensor TA",        // sensor - 센서 이름
-                "AA:BB:CC:DD:EE:FF",// mac - 실제 센서 맥주소로 변경
-                11,                 // temp
-                22,                 // humidity
-                33,                 // AQI
-                44,                 // TVOC
-                55,                 // eCO2
-                System.currentTimeMillis(), // timestamp
-                7.7,                // lat
-                8.8,                // lon
+                lastDeviceAddress,  // mac - 실제 센서 맥주소
+                lastPacket.temperature,
+                lastPacket.humidity,
+                lastPacket.aqi,
+                lastPacket.tvoc,
+                lastPacket.eco2,
+                lastPacket.timestamp,
+                lat,
+                lon,
                 deviceId            // sender
         );
 
