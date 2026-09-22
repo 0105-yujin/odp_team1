@@ -29,6 +29,10 @@ import retrofit2.converter.gson.GsonConverterFactory;
 import retrofit2.converter.scalars.ScalarsConverterFactory;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import android.provider.Settings;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE_S = 101;
@@ -68,10 +72,12 @@ public class MainActivity extends AppCompatActivity {
         Button btnScan = findViewById(R.id.btnScan);
         Button btnStop = findViewById(R.id.btnStop);
         Button btnSave = findViewById(R.id.btnSave); // 저장 버튼 연결
+        Button btnSend = findViewById(R.id.btnSend);
 
         btnScan.setOnClickListener(v -> startScanning());
         btnStop.setOnClickListener(v -> stopScanning());
-        btnSave.setOnClickListener(v -> saveBufferedData()); // 저장 버튼 클릭 시 실행
+        btnSave.setOnClickListener(v -> saveBufferedData());
+        btnSend.setOnClickListener(v -> sendDataToServer());// 저장 버튼 클릭 시 실행
     }
 
     private void bleInitialize(Activity activity) {
@@ -200,4 +206,50 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "저장 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show();
         }
     }
+    private void sendDataToServer() {
+        if (pendingCsvData.isEmpty()) {
+            Toast.makeText(this, "전송할 데이터가 없습니다.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String deviceId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+
+        ApiService apiService = retrofit.create(ApiService.class);
+
+        // 예시: 가장 최근 스캔 결과 하나를 보낸다고 가정 (실제 값은 상황에 맞게 채워야 함)
+        SensorRequest request = new SensorRequest(
+                "opensrc2026",      // key
+                "team TA",          // team - 본인 팀 번호로 변경
+                "sensor TA",        // sensor - 센서 이름
+                "AA:BB:CC:DD:EE:FF",// mac - 실제 센서 맥주소로 변경
+                11,                 // temp
+                22,                 // humidity
+                33,                 // AQI
+                44,                 // TVOC
+                55,                 // eCO2
+                System.currentTimeMillis(), // timestamp
+                7.7,                // lat
+                8.8,                // lon
+                deviceId            // sender
+        );
+
+        apiService.sendSensorData(request).enqueue(new Callback<SensorResponse>() {
+            @Override
+            public void onResponse(Call<SensorResponse> call, Response<SensorResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    Toast.makeText(MainActivity.this, response.body().getMessage(), Toast.LENGTH_SHORT).show();
+                    tvLog.append("\n[서버 응답] " + response.body().getResult() + " - " + response.body().getMessage());
+                } else {
+                    Toast.makeText(MainActivity.this, "서버 응답 오류", Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<SensorResponse> call, Throwable t) {
+                Toast.makeText(MainActivity.this, "전송 실패: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                tvLog.append("\n[전송 실패] " + t.getMessage());
+            }
+        });
+    }
 }
+
