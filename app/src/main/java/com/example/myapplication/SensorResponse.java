@@ -1,3 +1,5 @@
+package com.example.myapplication;
+
 public class SensorResponse {
     private String result;
     private String message;
