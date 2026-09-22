@@ -34,7 +34,7 @@ import retrofit2.Callback;
 import retrofit2.Response;
 import android.provider.Settings;
 
-public class gitMainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE_S = 101;
     private static final int PERMISSION_REQUEST_CODE = 100;
 
