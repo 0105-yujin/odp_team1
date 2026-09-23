@@ -251,7 +251,7 @@ public class MainActivity extends AppCompatActivity {
         // 가장 최근에 수신한 실제 스캔 값을 전송
         SensorRequest request = new SensorRequest(
                 "opensrc2026",      // key
-                "team TA",          // team - 본인 팀 번호로 변경
+                "team 1",          // team - 본인 팀 번호로 변경
                 "sensor TA",        // sensor - 센서 이름
                 lastDeviceAddress,  // mac - 실제 센서 맥주소
                 lastPacket.temperature,
