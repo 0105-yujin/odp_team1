@@ -223,7 +223,8 @@ public class MainActivity extends AppCompatActivity {
             if (scanRecordBytes != null) {
                 SensorPacket packet = SensorPacket.parse(scanRecordBytes);
                 if (packet != null) {
-                    String logStr = "\n[수신] 이름: " + deviceName + ", MAC: " + deviceAddress + ", RSSI: " + rssi + "\n" + packet.toString();
+                    String logStr = "\n[수신] 이름: " + deviceName + ", MAC: " + deviceAddress + ", RSSI: " + rssi + "\n" + packet.toString()
+                            + "\nRAW: " + bytesToHex(scanRecordBytes);
                     tvLog.append(logStr);
 
                     // ★ 진단용: 원본 바이트를 그대로 로그에 남겨서 AQI/TVOC/eCO2 자리(byte[4], byte[5-6], byte[7-8])가
