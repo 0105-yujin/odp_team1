@@ -63,7 +63,7 @@ public class MainActivity extends AppCompatActivity {
 
         Gson gson = new GsonBuilder().setLenient().create();
         retrofit = new Retrofit.Builder()
-                .baseUrl("http://10.255.81.72:10024/")
+                .baseUrl("http://203.255.81.72:10021/") // ★수정: API 슬라이드 기준 주소/포트로 변경 (기존 10.255.81.72:10024)
                 .addConverterFactory(ScalarsConverterFactory.create())
                 .addConverterFactory(GsonConverterFactory.create(gson))
                 .build();
@@ -73,10 +73,7 @@ public class MainActivity extends AppCompatActivity {
 
         locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
 
-        blead = BluetoothAdapter.getDefaultAdapter();
-        if (blead != null && blead.isEnabled()) {
-            bluetoothLeScanner = blead.getBluetoothLeScanner();
-        }
+        initBluetoothLeScanner();
 
         Button btnScan = findViewById(R.id.btnScan);
         Button btnStop = findViewById(R.id.btnStop);
@@ -87,6 +84,45 @@ public class MainActivity extends AppCompatActivity {
         btnStop.setOnClickListener(v -> stopScanning());
         btnSave.setOnClickListener(v -> saveBufferedData());
         btnSend.setOnClickListener(v -> sendDataToServer());// 저장 버튼 클릭 시 실행
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 블루투스를 앱 실행 후에 켰거나 권한을 뒤늦게 허용한 경우를 대비해 재확인
+        initBluetoothLeScanner();
+    }
+
+    private void initBluetoothLeScanner() {
+        blead = BluetoothAdapter.getDefaultAdapter();
+        if (blead == null) {
+            bluetoothLeScanner = null;
+            return;
+        }
+        if (blead.isEnabled()) {
+            bluetoothLeScanner = blead.getBluetoothLeScanner();
+        } else {
+            bluetoothLeScanner = null;
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        boolean allGranted = grantResults.length > 0;
+        for (int result : grantResults) {
+            if (result != PackageManager.PERMISSION_GRANTED) {
+                allGranted = false;
+                break;
+            }
+        }
+
+        if (allGranted) {
+            initBluetoothLeScanner();
+        } else {
+            Toast.makeText(this, "블루투스/위치 권한이 없으면 스캔할 수 없습니다.", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void bleInitialize(Activity activity) {
@@ -119,18 +155,32 @@ public class MainActivity extends AppCompatActivity {
 
     private void startScanning() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Toast.makeText(this, "블루투스 권한이 없습니다. 권한을 허용해주세요.", Toast.LENGTH_SHORT).show();
+            requestBlePermissions(this);
             return;
         }
-        if (bluetoothLeScanner == null) return;
 
-        List<ScanFilter> filters = new ArrayList<>();
-        filters.add(new ScanFilter.Builder().setServiceUuid(ParcelUuid.fromString("0000181a-0000-1000-8000-00805f9b34fb")).build());
+        // 스캐너가 아직 준비되지 않았다면(블루투스가 나중에 켜진 경우 등) 재시도
+        if (bluetoothLeScanner == null) {
+            initBluetoothLeScanner();
+        }
+        if (blead == null || !blead.isEnabled()) {
+            Toast.makeText(this, "블루투스가 꺼져 있습니다. 켜주세요.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (bluetoothLeScanner == null) {
+            Toast.makeText(this, "블루투스 스캐너를 사용할 수 없습니다.", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
+        // ★ ScanFilter.setServiceUuid()는 광고 패킷의 "서비스 UUID 목록" AD 필드만 검사한다.
+        // 센서가 UUID를 Service Data 필드에만 실어 보내면 이 필터에 안 걸려 onScanResult가 전혀 호출되지 않는다.
+        // 필터링은 onScanResult 안에서 기기 이름으로 소프트웨어적으로 하므로 OS 레벨 필터는 걸지 않는다.
         ScanSettings scanSettings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
 
-        bluetoothLeScanner.startScan(filters, scanSettings, scanCallback);
+        bluetoothLeScanner.startScan(null, scanSettings, scanCallback);
         tvLog.append("\n\n--- 스캔 시작 ---");
     }
 
@@ -156,9 +206,11 @@ public class MainActivity extends AppCompatActivity {
             String deviceName = device.getName();
             String deviceAddress = device.getAddress();
 
+            if (deviceName == null || !deviceName.equals("opensrc_week_3")) return;
+
             byte[] scanRecordBytes = scanRecord != null ? scanRecord.getServiceData(ParcelUuid.fromString("0000181a-0000-1000-8000-00805f9b34fb")) : null;
 
-            if (deviceName != null && deviceName.equals("opensrc_week_3") && scanRecordBytes != null) {
+            if (scanRecordBytes != null) {
                 SensorPacket packet = SensorPacket.parse(scanRecordBytes);
                 if (packet != null) {
                     String logStr = "\n[수신] 이름: " + deviceName + ", MAC: " + deviceAddress + ", RSSI: " + rssi + "\n" + packet.toString();
@@ -251,8 +303,8 @@ public class MainActivity extends AppCompatActivity {
         // 가장 최근에 수신한 실제 스캔 값을 전송
         SensorRequest request = new SensorRequest(
                 "opensrc2026",      // key
-                "team 1",          // team - 본인 팀 번호로 변경
-                "sensor TA",        // sensor - 센서 이름
+                "team 1",   // ★수정: 실제 팀 번호로 변경 필요 (예: "team 1" → 본인 팀에 맞게)
+                "opensrc_week_3",        // sensor - 센서 이름
                 lastDeviceAddress,  // mac - 실제 센서 맥주소
                 lastPacket.temperature,
                 lastPacket.humidity,
@@ -272,7 +324,14 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(MainActivity.this, response.body().getMessage(), Toast.LENGTH_SHORT).show();
                     tvLog.append("\n[서버 응답] " + response.body().getResult() + " - " + response.body().getMessage());
                 } else {
-                    Toast.makeText(MainActivity.this, "서버 응답 오류", Toast.LENGTH_SHORT).show();
+                    String errorDetail;
+                    try {
+                        errorDetail = response.errorBody() != null ? response.errorBody().string() : "(본문 없음)";
+                    } catch (IOException e) {
+                        errorDetail = "(에러 본문 읽기 실패: " + e.getMessage() + ")";
+                    }
+                    Toast.makeText(MainActivity.this, "서버 응답 오류 (" + response.code() + ")", Toast.LENGTH_SHORT).show();
+                    tvLog.append("\n[서버 응답 오류] HTTP " + response.code() + " - " + errorDetail);
                 }
             }
 
@@ -284,4 +343,3 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 }
-

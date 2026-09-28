@@ -9,12 +9,12 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal">
-        <Button android:id="@+id/btnScan" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="스캔 시작" />
-        <Button android:id="@+id/btnStop" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="스캔 중지" />
+        <Button android:id="@+id/btnScan" style="@style/Widget.AppCompat.Button" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minWidth="0dp" android:minHeight="0dp" android:textSize="11sp" android:paddingLeft="2dp" android:paddingRight="2dp" android:text="스캔 시작" />
+        <Button android:id="@+id/btnStop" style="@style/Widget.AppCompat.Button" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minWidth="0dp" android:minHeight="0dp" android:textSize="11sp" android:paddingLeft="2dp" android:paddingRight="2dp" android:text="스캔 중지" />
         <!-- 저장 버튼 추가 -->
-        <Button android:id="@+id/btnSave" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="데이터 저장" />
+        <Button android:id="@+id/btnSave" style="@style/Widget.AppCompat.Button" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minWidth="0dp" android:minHeight="0dp" android:textSize="11sp" android:paddingLeft="2dp" android:paddingRight="2dp" android:text="데이터 저장" />
         <!-- 전송 버튼 추가 -->
-        <Button android:id="@+id/btnSend" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="서버 전송" />
+        <Button android:id="@+id/btnSend" style="@style/Widget.AppCompat.Button" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minWidth="0dp" android:minHeight="0dp" android:textSize="11sp" android:paddingLeft="2dp" android:paddingRight="2dp" android:text="서버 전송" />
     </LinearLayout>
 
     <TextView
