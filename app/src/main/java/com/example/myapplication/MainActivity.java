@@ -214,7 +214,8 @@ public class MainActivity extends AppCompatActivity {
             if (scanRecordBytes != null) {
                 SensorPacket packet = SensorPacket.parse(scanRecordBytes);
                 if (packet != null) {
-                    String logStr = "\n[수신] 이름: " + deviceName + ", MAC: " + deviceAddress + ", RSSI: " + rssi + "\n" + packet.toString();
+                    String logStr = "\n[수신] 이름: " + deviceName + ", MAC: " + deviceAddress + ", RSSI: " + rssi + "\n" + packet.toString()
+                            + "\nRAW: " + bytesToHex(scanRecordBytes);
                     tvLog.append(logStr);
 
                     // ★ 습도, AQI, TVOC, HMAC 태그까지 모두 포함하여 임시 보관
