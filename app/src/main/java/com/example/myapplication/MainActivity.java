@@ -51,6 +51,7 @@ public class MainActivity extends AppCompatActivity {
     // 서버 전송용: 가장 최근에 수신한 스캔 값
     private SensorPacket lastPacket;
     private String lastDeviceAddress;
+    private byte[] lastRawBytes;
 
     private Retrofit retrofit;
 
@@ -222,6 +223,7 @@ public class MainActivity extends AppCompatActivity {
 
                     lastPacket = packet;
                     lastDeviceAddress = deviceAddress;
+                    lastRawBytes = scanRecordBytes;
                 }
             }
         }
@@ -286,6 +288,15 @@ public class MainActivity extends AppCompatActivity {
         return best;
     }
 
+    private static String bytesToHex(byte[] bytes) {
+        if (bytes == null) return null;
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
     private void sendDataToServer() {
         if (lastPacket == null) {
             Toast.makeText(this, "전송할 데이터가 없습니다.", Toast.LENGTH_SHORT).show();
@@ -314,7 +325,8 @@ public class MainActivity extends AppCompatActivity {
                 lastPacket.timestamp,
                 lat,
                 lon,
-                deviceId            // sender
+                deviceId,           // sender
+                bytesToHex(lastRawBytes) // raw - 서버 검증용 원본 패킷 바이트
         );
 
         apiService.sendSensorData(request).enqueue(new Callback<SensorResponse>() {
