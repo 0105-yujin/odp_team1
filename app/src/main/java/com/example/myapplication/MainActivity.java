@@ -26,6 +26,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import retrofit2.Retrofit;
 import retrofit2.converter.gson.GsonConverterFactory;
 import retrofit2.converter.scalars.ScalarsConverterFactory;
@@ -48,10 +49,18 @@ public class MainActivity extends AppCompatActivity {
     // 버튼을 누를 때까지 데이터를 임시로 모아둘 리스트
     private List<String> pendingCsvData = new ArrayList<>();
 
-    // 서버 전송용: 가장 최근에 수신한 스캔 값
-    private SensorPacket lastPacket;
-    private String lastDeviceAddress;
-    private byte[] lastRawBytes;
+    // ★ 서버 전송용: 스캔된 값을 마지막 1건만이 아니라 전부 모아둠 (전송 버튼 누를 때 전부 보냄)
+    private static class PendingScan {
+        final SensorPacket packet;
+        final String deviceAddress;
+        final byte[] rawBytes;
+        PendingScan(SensorPacket packet, String deviceAddress, byte[] rawBytes) {
+            this.packet = packet;
+            this.deviceAddress = deviceAddress;
+            this.rawBytes = rawBytes;
+        }
+    }
+    private final List<PendingScan> pendingScans = new ArrayList<>();
 
     private Retrofit retrofit;
 
@@ -217,13 +226,18 @@ public class MainActivity extends AppCompatActivity {
                     String logStr = "\n[수신] 이름: " + deviceName + ", MAC: " + deviceAddress + ", RSSI: " + rssi + "\n" + packet.toString();
                     tvLog.append(logStr);
 
+                    // ★ 진단용: 원본 바이트를 그대로 로그에 남겨서 AQI/TVOC/eCO2 자리(byte[4], byte[5-6], byte[7-8])가
+                    // 수신 시점에 실제로 0인지, 파싱 과정에서 0이 되는지 바로 눈으로 확인할 수 있게 함.
+                    tvLog.append("\nRAW(" + scanRecordBytes.length + "B): " + bytesToHex(scanRecordBytes)
+                            + "\n  ㄴ aqi byte[4]=" + String.format("%02x", scanRecordBytes[4])
+                            + ", tvoc byte[5-6]=" + String.format("%02x%02x", scanRecordBytes[6], scanRecordBytes[5])
+                            + ", eco2 byte[7-8]=" + String.format("%02x%02x", scanRecordBytes[8], scanRecordBytes[7]));
+
                     // ★ 습도, AQI, TVOC, HMAC 태그까지 모두 포함하여 임시 보관
                     String csvLine = packet.timestamp + "," + deviceName + "," + deviceAddress + "," + rssi + ",0x181A," + packet.eco2 + "," + packet.temperature + "," + packet.humidity + "," + packet.aqi + "," + packet.tvoc + "," + packet.hmacTag + "\n";
                     pendingCsvData.add(csvLine);
 
-                    lastPacket = packet;
-                    lastDeviceAddress = deviceAddress;
-                    lastRawBytes = scanRecordBytes;
+                    pendingScans.add(new PendingScan(packet, deviceAddress, scanRecordBytes));
                 }
             }
         }
@@ -298,7 +312,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void sendDataToServer() {
-        if (lastPacket == null) {
+        if (pendingScans.isEmpty()) {
             Toast.makeText(this, "전송할 데이터가 없습니다.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -311,47 +325,68 @@ public class MainActivity extends AppCompatActivity {
         double lat = location != null ? location.getLatitude() : 0.0;
         double lon = location != null ? location.getLongitude() : 0.0;
 
-        // 가장 최근에 수신한 실제 스캔 값을 전송
-        SensorRequest request = new SensorRequest(
-                "opensrc2026",      // key
-                "team 1",   // ★수정: 실제 팀 번호로 변경 필요 (예: "team 1" → 본인 팀에 맞게)
-                "opensrc_week_3",        // sensor - 센서 이름
-                lastDeviceAddress,  // mac - 실제 센서 맥주소
-                lastPacket.temperature,
-                lastPacket.humidity,
-                lastPacket.aqi,
-                lastPacket.tvoc,
-                lastPacket.eco2,
-                lastPacket.timestamp,
-                lat,
-                lon,
-                deviceId,           // sender
-                bytesToHex(lastRawBytes) // raw - 서버 검증용 원본 패킷 바이트
-        );
+        // ★ 스캔 중 쌓인 값을 전부 서버로 전송 (기존엔 마지막 1건만 보내서 전송 누락 발생)
+        List<PendingScan> toSend = new ArrayList<>(pendingScans);
+        pendingScans.clear();
 
-        apiService.sendSensorData(request).enqueue(new Callback<SensorResponse>() {
-            @Override
-            public void onResponse(Call<SensorResponse> call, Response<SensorResponse> response) {
-                if (response.isSuccessful() && response.body() != null) {
-                    Toast.makeText(MainActivity.this, response.body().getMessage(), Toast.LENGTH_SHORT).show();
-                    tvLog.append("\n[서버 응답] " + response.body().getResult() + " - " + response.body().getMessage());
-                } else {
-                    String errorDetail;
-                    try {
-                        errorDetail = response.errorBody() != null ? response.errorBody().string() : "(본문 없음)";
-                    } catch (IOException e) {
-                        errorDetail = "(에러 본문 읽기 실패: " + e.getMessage() + ")";
+        int total = toSend.size();
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failCount = new AtomicInteger(0);
+
+        tvLog.append("\n\n[전송 시작] 총 " + total + "건");
+
+        for (PendingScan scan : toSend) {
+            SensorRequest request = new SensorRequest(
+                    "opensrc2026",      // key
+                    "team 1",   // ★수정: 실제 팀 번호로 변경 필요 (예: "team 1" → 본인 팀에 맞게)
+                    "opensrc_week_3",        // sensor - 센서 이름
+                    scan.deviceAddress,  // mac - 실제 센서 맥주소
+                    scan.packet.temperature,
+                    scan.packet.humidity,
+                    scan.packet.aqi,
+                    scan.packet.tvoc,
+                    scan.packet.eco2,
+                    scan.packet.timestamp,
+                    lat,
+                    lon,
+                    deviceId,           // sender
+                    bytesToHex(scan.rawBytes) // raw - 서버 검증용 원본 패킷 바이트
+            );
+
+            apiService.sendSensorData(request).enqueue(new Callback<SensorResponse>() {
+                @Override
+                public void onResponse(Call<SensorResponse> call, Response<SensorResponse> response) {
+                    if (response.isSuccessful() && response.body() != null) {
+                        successCount.incrementAndGet();
+                        tvLog.append("\n[서버 응답] " + response.body().getResult() + " - " + response.body().getMessage());
+                    } else {
+                        failCount.incrementAndGet();
+                        String errorDetail;
+                        try {
+                            errorDetail = response.errorBody() != null ? response.errorBody().string() : "(본문 없음)";
+                        } catch (IOException e) {
+                            errorDetail = "(에러 본문 읽기 실패: " + e.getMessage() + ")";
+                        }
+                        tvLog.append("\n[서버 응답 오류] HTTP " + response.code() + " - " + errorDetail);
                     }
-                    Toast.makeText(MainActivity.this, "서버 응답 오류 (" + response.code() + ")", Toast.LENGTH_SHORT).show();
-                    tvLog.append("\n[서버 응답 오류] HTTP " + response.code() + " - " + errorDetail);
+                    reportSendProgress(successCount, failCount, total);
                 }
-            }
 
-            @Override
-            public void onFailure(Call<SensorResponse> call, Throwable t) {
-                Toast.makeText(MainActivity.this, "전송 실패: " + t.getMessage(), Toast.LENGTH_SHORT).show();
-                tvLog.append("\n[전송 실패] " + t.getMessage());
-            }
-        });
+                @Override
+                public void onFailure(Call<SensorResponse> call, Throwable t) {
+                    failCount.incrementAndGet();
+                    tvLog.append("\n[전송 실패] " + t.getMessage());
+                    reportSendProgress(successCount, failCount, total);
+                }
+            });
+        }
+    }
+
+    private void reportSendProgress(AtomicInteger successCount, AtomicInteger failCount, int total) {
+        int done = successCount.get() + failCount.get();
+        if (done == total) {
+            Toast.makeText(this, "전송 완료: 성공 " + successCount.get() + "건 / 실패 " + failCount.get() + "건", Toast.LENGTH_LONG).show();
+            tvLog.append("\n[전송 완료] 성공 " + successCount.get() + "건 / 실패 " + failCount.get() + "건");
+        }
     }
 }
