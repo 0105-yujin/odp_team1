@@ -41,6 +41,11 @@ public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE_S = 101;
     private static final int PERMISSION_REQUEST_CODE = 100;
 
+    private static final int TEAM_NO = 1;
+    private static final String TEAM_KEY = "opensrc_team1";
+    private static final String SENSOR_NAME = "team1 sensor";
+    private static final String TARGET_DEVICE_NAME = "opensrc_team" + TEAM_NO;
+
     private BluetoothAdapter blead;
     private BluetoothLeScanner bluetoothLeScanner;
     private TextView tvLog;
@@ -53,11 +58,9 @@ public class MainActivity extends AppCompatActivity {
     private static class PendingScan {
         final SensorPacket packet;
         final String deviceAddress;
-        final byte[] rawBytes;
-        PendingScan(SensorPacket packet, String deviceAddress, byte[] rawBytes) {
+        PendingScan(SensorPacket packet, String deviceAddress) {
             this.packet = packet;
             this.deviceAddress = deviceAddress;
-            this.rawBytes = rawBytes;
         }
     }
     private final List<PendingScan> pendingScans = new ArrayList<>();
@@ -216,7 +219,7 @@ public class MainActivity extends AppCompatActivity {
             String deviceName = device.getName();
             String deviceAddress = device.getAddress();
 
-            if (deviceName == null || !deviceName.equals("opensrc_week_3")) return;
+            if (deviceName == null || !deviceName.equals(TARGET_DEVICE_NAME)) return;
 
             byte[] scanRecordBytes = scanRecord != null ? scanRecord.getServiceData(ParcelUuid.fromString("0000181a-0000-1000-8000-00805f9b34fb")) : null;
 
@@ -233,11 +236,11 @@ public class MainActivity extends AppCompatActivity {
                             + ", tvoc byte[5-6]=" + String.format("%02x%02x", scanRecordBytes[6], scanRecordBytes[5])
                             + ", eco2 byte[7-8]=" + String.format("%02x%02x", scanRecordBytes[8], scanRecordBytes[7]));
 
-                    // ★ 습도, AQI, TVOC, HMAC 태그까지 모두 포함하여 임시 보관
-                    String csvLine = packet.timestamp + "," + deviceName + "," + deviceAddress + "," + rssi + ",0x181A," + packet.eco2 + "," + packet.temperature + "," + packet.humidity + "," + packet.aqi + "," + packet.tvoc + "," + packet.hmacTag + "\n";
+                    // ★ 습도, AQI, TVOC까지 모두 포함하여 임시 보관
+                    String csvLine = packet.timestamp + "," + deviceName + "," + deviceAddress + "," + rssi + ",0x181A," + packet.eco2 + "," + packet.temperature + "," + packet.humidity + "," + packet.aqi + "," + packet.tvoc + "\n";
                     pendingCsvData.add(csvLine);
 
-                    pendingScans.add(new PendingScan(packet, deviceAddress, scanRecordBytes));
+                    pendingScans.add(new PendingScan(packet, deviceAddress));
                 }
             }
         }
@@ -262,7 +265,7 @@ public class MainActivity extends AppCompatActivity {
 
             // ★ 모든 데이터에 맞게 CSV 컬럼 헤더(맨 윗줄) 변경
             if (!fileExists) {
-                fw.append("timestamp,device_name,device_address,rssi,uuid,co2,temperature,humidity,aqi,tvoc,hmactag\n");
+                fw.append("timestamp,device_name,device_address,rssi,uuid,co2,temperature,humidity,aqi,tvoc\n");
             }
 
             for (String line : pendingCsvData) {
@@ -337,9 +340,8 @@ public class MainActivity extends AppCompatActivity {
 
         for (PendingScan scan : toSend) {
             SensorRequest request = new SensorRequest(
-                    "opensrc2026",      // key
-                    "team 1",   // ★수정: 실제 팀 번호로 변경 필요 (예: "team 1" → 본인 팀에 맞게)
-                    "opensrc_week_3",        // sensor - 센서 이름
+                    TEAM_KEY,           // key
+                    SENSOR_NAME,        // sensor - 센서 이름
                     scan.deviceAddress,  // mac - 실제 센서 맥주소
                     scan.packet.temperature,
                     scan.packet.humidity,
@@ -349,8 +351,7 @@ public class MainActivity extends AppCompatActivity {
                     scan.packet.timestamp,
                     lat,
                     lon,
-                    deviceId,           // sender
-                    bytesToHex(scan.rawBytes) // raw - 서버 검증용 원본 패킷 바이트
+                    deviceId           // sender
             );
 
             apiService.sendSensorData(request).enqueue(new Callback<SensorResponse>() {
@@ -358,7 +359,14 @@ public class MainActivity extends AppCompatActivity {
                 public void onResponse(Call<SensorResponse> call, Response<SensorResponse> response) {
                     if (response.isSuccessful() && response.body() != null) {
                         successCount.incrementAndGet();
-                        tvLog.append("\n[서버 응답] " + response.body().getResult() + " - " + response.body().getMessage());
+                        String status = response.body().getStatus();
+                        if ("ok".equals(status)) {
+                            tvLog.append("\n[서버 응답: 정상] " + response.body().getResult() + " - " + response.body().getMessage());
+                        } else if ("out_of_range".equals(status)) {
+                            tvLog.append("\n[서버 응답: 범위 초과] " + response.body().getResult() + " - " + response.body().getMessage());
+                        } else {
+                            tvLog.append("\n[서버 응답] " + response.body().getResult() + " - " + response.body().getMessage());
+                        }
                     } else {
                         failCount.incrementAndGet();
                         String errorDetail;
