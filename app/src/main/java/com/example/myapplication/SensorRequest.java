@@ -18,10 +18,11 @@ public class SensorRequest {
     private double lat;
     private double lon;
     private String sender;
+    private int rssi;
 
     public SensorRequest(String key, String sensor, String mac,
                          double temp, double humidity, double AQI, double TVOC, double eCO2,
-                         long timestamp, double lat, double lon, String sender) {
+                         long timestamp, double lat, double lon, String sender, int rssi) {
         this.key = key;
         this.sensor = sensor;
         this.mac = mac;
@@ -34,5 +35,6 @@ public class SensorRequest {
         this.lat = lat;
         this.lon = lon;
         this.sender = sender;
+        this.rssi = rssi;
     }
 }

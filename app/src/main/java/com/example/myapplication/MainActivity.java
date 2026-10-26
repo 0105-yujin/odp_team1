@@ -11,22 +11,31 @@ import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.pm.PackageManager;
-import android.location.Location;
-import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Looper;
 import android.os.ParcelUuid;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Map;
+import java.util.Set;
 import retrofit2.Retrofit;
 import retrofit2.converter.gson.GsonConverterFactory;
 import retrofit2.converter.scalars.ScalarsConverterFactory;
@@ -42,28 +51,35 @@ public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 100;
 
     private static final int TEAM_NO = 1;
-    private static final String TEAM_KEY = "opensrc_team1";
+    private static final String TEAM_KEY = "opensrc-team1";
     private static final String SENSOR_NAME = "team1 sensor";
-    private static final String TARGET_DEVICE_NAME = "opensrc_team" + TEAM_NO;
+    private static final Set<String> TARGET_NAMES = new HashSet<>(Arrays.asList(
+            "opensrc1", "opensrc2", "opensrc3", "opensrc4", "opensrc5"));
+
+    private static final long UPLOAD_INTERVAL_MS = 10_000;
+    private static final boolean AUTO_UPLOAD = true;
 
     private BluetoothAdapter blead;
     private BluetoothLeScanner bluetoothLeScanner;
     private TextView tvLog;
-    private LocationManager locationManager;
+
+    private FusedLocationProviderClient fusedLocationClient;
+    private LocationCallback locationCallback;
+    private volatile double curLat = 0.0;
+    private volatile double curLon = 0.0;
+    private volatile boolean hasLocation = false;
 
     // 버튼을 누를 때까지 데이터를 임시로 모아둘 리스트
     private List<String> pendingCsvData = new ArrayList<>();
 
-    // ★ 서버 전송용: 스캔된 값을 마지막 1건만이 아니라 전부 모아둠 (전송 버튼 누를 때 전부 보냄)
-    private static class PendingScan {
-        final SensorPacket packet;
-        final String deviceAddress;
-        PendingScan(SensorPacket packet, String deviceAddress) {
-            this.packet = packet;
-            this.deviceAddress = deviceAddress;
-        }
-    }
-    private final List<PendingScan> pendingScans = new ArrayList<>();
+    // 센서(기기명)별 마지막 업로드 시각 - 중복 업로드 쓰로틀링용
+    private final Map<String, Long> lastUploadMs = new HashMap<>();
+
+    // 수동 전송 버튼용: 마지막으로 수신한 패킷
+    private SensorPacket lastPacket;
+    private String lastMac;
+    private int lastRssi;
+    private String lastDeviceName;
 
     private Retrofit retrofit;
 
@@ -84,7 +100,8 @@ public class MainActivity extends AppCompatActivity {
         // 권한 체크 및 초기화
         bleInitialize(this);
 
-        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        startLocationUpdates();
 
         initBluetoothLeScanner();
 
@@ -96,7 +113,13 @@ public class MainActivity extends AppCompatActivity {
         btnScan.setOnClickListener(v -> startScanning());
         btnStop.setOnClickListener(v -> stopScanning());
         btnSave.setOnClickListener(v -> saveBufferedData());
-        btnSend.setOnClickListener(v -> sendDataToServer());// 저장 버튼 클릭 시 실행
+        btnSend.setOnClickListener(v -> {
+            if (lastPacket == null) {
+                Toast.makeText(this, "전송할 데이터가 없습니다.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            sendDataToServer(lastPacket, lastMac, lastRssi, lastDeviceName);
+        });// 저장 버튼 클릭 시 실행
     }
 
     @Override
@@ -104,6 +127,52 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         // 블루투스를 앱 실행 후에 켰거나 권한을 뒤늦게 허용한 경우를 대비해 재확인
         initBluetoothLeScanner();
+        startLocationUpdates();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        stopLocationUpdates();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        stopLocationUpdates();
+    }
+
+    private void startLocationUpdates() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        if (fusedLocationClient == null) {
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        }
+        if (locationCallback != null) {
+            // 이미 등록되어 있으면 중복 등록하지 않음
+            return;
+        }
+        locationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult result) {
+                if (result == null) return;
+                android.location.Location location = result.getLastLocation();
+                if (location == null) return;
+                curLat = location.getLatitude();
+                curLon = location.getLongitude();
+                hasLocation = true;
+            }
+        };
+        LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000).build();
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
+    }
+
+    private void stopLocationUpdates() {
+        if (fusedLocationClient != null && locationCallback != null) {
+            fusedLocationClient.removeLocationUpdates(locationCallback);
+        }
+        locationCallback = null;
     }
 
     private void initBluetoothLeScanner() {
@@ -133,6 +202,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (allGranted) {
             initBluetoothLeScanner();
+            startLocationUpdates();
         } else {
             Toast.makeText(this, "블루투스/위치 권한이 없으면 스캔할 수 없습니다.", Toast.LENGTH_LONG).show();
         }
@@ -219,7 +289,12 @@ public class MainActivity extends AppCompatActivity {
             String deviceName = device.getName();
             String deviceAddress = device.getAddress();
 
-            if (deviceName == null || !deviceName.equals(TARGET_DEVICE_NAME)) return;
+            if (deviceName == null || !TARGET_NAMES.contains(deviceName)) return;
+
+            if (rssi == 0) {
+                tvLog.append("\n[무효] RSSI 0");
+                return;
+            }
 
             byte[] scanRecordBytes = scanRecord != null ? scanRecord.getServiceData(ParcelUuid.fromString("0000181a-0000-1000-8000-00805f9b34fb")) : null;
 
@@ -240,7 +315,19 @@ public class MainActivity extends AppCompatActivity {
                     String csvLine = packet.timestamp + "," + deviceName + "," + deviceAddress + "," + rssi + ",0x181A," + packet.eco2 + "," + packet.temperature + "," + packet.humidity + "," + packet.aqi + "," + packet.tvoc + "\n";
                     pendingCsvData.add(csvLine);
 
-                    pendingScans.add(new PendingScan(packet, deviceAddress));
+                    lastPacket = packet;
+                    lastMac = deviceAddress;
+                    lastRssi = rssi;
+                    lastDeviceName = deviceName;
+
+                    if (AUTO_UPLOAD) {
+                        long now = System.currentTimeMillis();
+                        Long last = lastUploadMs.get(deviceName);
+                        if (last == null || now - last >= UPLOAD_INTERVAL_MS) {
+                            lastUploadMs.put(deviceName, now);
+                            sendDataToServer(packet, deviceAddress, rssi, deviceName);
+                        }
+                    }
                 }
             }
         }
@@ -286,25 +373,6 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "저장 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show();
         }
     }
-    private Location getLastKnownLocation() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return null;
-        }
-
-        Location best = null;
-        for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
-            try {
-                Location location = locationManager.getLastKnownLocation(provider);
-                if (location != null && (best == null || location.getTime() > best.getTime())) {
-                    best = location;
-                }
-            } catch (IllegalArgumentException | SecurityException ignored) {
-                // 기기에 해당 provider가 없거나 권한이 없는 경우
-            }
-        }
-        return best;
-    }
-
     private static String bytesToHex(byte[] bytes) {
         if (bytes == null) return null;
         StringBuilder sb = new StringBuilder(bytes.length * 2);
@@ -314,9 +382,9 @@ public class MainActivity extends AppCompatActivity {
         return sb.toString();
     }
 
-    private void sendDataToServer() {
-        if (pendingScans.isEmpty()) {
-            Toast.makeText(this, "전송할 데이터가 없습니다.", Toast.LENGTH_SHORT).show();
+    private void sendDataToServer(SensorPacket packet, String mac, int rssi, String deviceName) {
+        if (!hasLocation || (curLat == 0.0 && curLon == 0.0)) {
+            tvLog.append("\n[위치 미수신] 야외에서 잠시 대기");
             return;
         }
 
@@ -324,77 +392,51 @@ public class MainActivity extends AppCompatActivity {
 
         ApiService apiService = retrofit.create(ApiService.class);
 
-        Location location = getLastKnownLocation();
-        double lat = location != null ? location.getLatitude() : 0.0;
-        double lon = location != null ? location.getLongitude() : 0.0;
+        SensorRequest request = new SensorRequest(
+                TEAM_KEY,           // key
+                SENSOR_NAME,        // sensor - 센서 이름
+                mac,                // mac - 실제 센서 맥주소
+                packet.temperature,
+                packet.humidity,
+                packet.aqi,
+                packet.tvoc,
+                packet.eco2,
+                packet.timestamp,
+                curLat,
+                curLon,
+                deviceId,           // sender
+                rssi
+        );
 
-        // ★ 스캔 중 쌓인 값을 전부 서버로 전송 (기존엔 마지막 1건만 보내서 전송 누락 발생)
-        List<PendingScan> toSend = new ArrayList<>(pendingScans);
-        pendingScans.clear();
+        tvLog.append("\n\n[전송 시작] " + deviceName + " (RSSI " + rssi + ")");
 
-        int total = toSend.size();
-        AtomicInteger successCount = new AtomicInteger(0);
-        AtomicInteger failCount = new AtomicInteger(0);
-
-        tvLog.append("\n\n[전송 시작] 총 " + total + "건");
-
-        for (PendingScan scan : toSend) {
-            SensorRequest request = new SensorRequest(
-                    TEAM_KEY,           // key
-                    SENSOR_NAME,        // sensor - 센서 이름
-                    scan.deviceAddress,  // mac - 실제 센서 맥주소
-                    scan.packet.temperature,
-                    scan.packet.humidity,
-                    scan.packet.aqi,
-                    scan.packet.tvoc,
-                    scan.packet.eco2,
-                    scan.packet.timestamp,
-                    lat,
-                    lon,
-                    deviceId           // sender
-            );
-
-            apiService.sendSensorData(request).enqueue(new Callback<SensorResponse>() {
-                @Override
-                public void onResponse(Call<SensorResponse> call, Response<SensorResponse> response) {
-                    if (response.isSuccessful() && response.body() != null) {
-                        successCount.incrementAndGet();
-                        String status = response.body().getStatus();
-                        if ("ok".equals(status)) {
-                            tvLog.append("\n[서버 응답: 정상] " + response.body().getResult() + " - " + response.body().getMessage());
-                        } else if ("out_of_range".equals(status)) {
-                            tvLog.append("\n[서버 응답: 범위 초과] " + response.body().getResult() + " - " + response.body().getMessage());
-                        } else {
-                            tvLog.append("\n[서버 응답] " + response.body().getResult() + " - " + response.body().getMessage());
-                        }
+        apiService.sendSensorData(request).enqueue(new Callback<SensorResponse>() {
+            @Override
+            public void onResponse(Call<SensorResponse> call, Response<SensorResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    String status = response.body().getStatus();
+                    if ("ok".equals(status)) {
+                        tvLog.append("\n[서버 응답: 정상] " + deviceName + " RSSI " + rssi + " - " + response.body().getResult() + " - " + response.body().getMessage());
+                    } else if ("out_of_range".equals(status)) {
+                        tvLog.append("\n[서버 응답: 범위 초과] " + deviceName + " RSSI " + rssi + " - " + response.body().getResult() + " - " + response.body().getMessage());
                     } else {
-                        failCount.incrementAndGet();
-                        String errorDetail;
-                        try {
-                            errorDetail = response.errorBody() != null ? response.errorBody().string() : "(본문 없음)";
-                        } catch (IOException e) {
-                            errorDetail = "(에러 본문 읽기 실패: " + e.getMessage() + ")";
-                        }
-                        tvLog.append("\n[서버 응답 오류] HTTP " + response.code() + " - " + errorDetail);
+                        tvLog.append("\n[서버 응답] " + deviceName + " RSSI " + rssi + " - " + response.body().getResult() + " - " + response.body().getMessage());
                     }
-                    reportSendProgress(successCount, failCount, total);
+                } else {
+                    String errorDetail;
+                    try {
+                        errorDetail = response.errorBody() != null ? response.errorBody().string() : "(본문 없음)";
+                    } catch (IOException e) {
+                        errorDetail = "(에러 본문 읽기 실패: " + e.getMessage() + ")";
+                    }
+                    tvLog.append("\n[서버 응답 오류] " + deviceName + " RSSI " + rssi + " - HTTP " + response.code() + " - " + errorDetail);
                 }
+            }
 
-                @Override
-                public void onFailure(Call<SensorResponse> call, Throwable t) {
-                    failCount.incrementAndGet();
-                    tvLog.append("\n[전송 실패] " + t.getMessage());
-                    reportSendProgress(successCount, failCount, total);
-                }
-            });
-        }
-    }
-
-    private void reportSendProgress(AtomicInteger successCount, AtomicInteger failCount, int total) {
-        int done = successCount.get() + failCount.get();
-        if (done == total) {
-            Toast.makeText(this, "전송 완료: 성공 " + successCount.get() + "건 / 실패 " + failCount.get() + "건", Toast.LENGTH_LONG).show();
-            tvLog.append("\n[전송 완료] 성공 " + successCount.get() + "건 / 실패 " + failCount.get() + "건");
-        }
+            @Override
+            public void onFailure(Call<SensorResponse> call, Throwable t) {
+                tvLog.append("\n[전송 실패] " + deviceName + " RSSI " + rssi + " - " + t.getMessage());
+            }
+        });
     }
 }
