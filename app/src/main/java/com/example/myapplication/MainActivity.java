@@ -52,12 +52,14 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int TEAM_NO = 1;
     private static final String TEAM_KEY = "opensrc-team1";
-    private static final String SENSOR_NAME = "team1 sensor";
     private static final Set<String> TARGET_NAMES = new HashSet<>(Arrays.asList(
             "opensrc1", "opensrc2", "opensrc3", "opensrc4", "opensrc5"));
 
     private static final long UPLOAD_INTERVAL_MS = 10_000;
     private static final boolean AUTO_UPLOAD = true;
+
+    // ★ 이보다 약한 신호(먼 센서/노이즈)는 무시
+    private static final int MIN_VALID_RSSI = -100;
 
     private BluetoothAdapter blead;
     private BluetoothLeScanner bluetoothLeScanner;
@@ -291,8 +293,8 @@ public class MainActivity extends AppCompatActivity {
 
             if (deviceName == null || !TARGET_NAMES.contains(deviceName)) return;
 
-            if (rssi == 0) {
-                tvLog.append("\n[무효] RSSI 0");
+            if (rssi == 0 || rssi < MIN_VALID_RSSI) {
+                tvLog.append("\n[무효] RSSI " + rssi);
                 return;
             }
 
@@ -394,7 +396,7 @@ public class MainActivity extends AppCompatActivity {
 
         SensorRequest request = new SensorRequest(
                 TEAM_KEY,           // key
-                SENSOR_NAME,        // sensor - 센서 이름
+                deviceName,         // sensor - 센서 이름 (opensrc1~opensrc5)
                 mac,                // mac - 실제 센서 맥주소
                 packet.temperature,
                 packet.humidity,
